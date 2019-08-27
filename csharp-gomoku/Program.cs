@@ -13,7 +13,9 @@ namespace csharp_gomoku {
         static void Main() {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new Form1());
+
+            var gs = new Gamestate();
+            Application.Run(new GUI(gs));
         }
     }
 }
