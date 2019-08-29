@@ -15,15 +15,21 @@ namespace csharp_gomoku {
         Brush bBlack, bWhite, bRed;
         Pen pBlack;
 
-        Gamestate GS;
+        Gamestate GS; //draw gamestate from here
+        Controller ctrl; //send inputs here
 
         const int ss = 20; //STONE SIZE constant for drawing purposes
         const int ls = 24; //LINE SPACING constant for drawing purposes
         const bool clickMove = true; //enable moves by clicking the board (otherwise text input?)
 
-        public GUI(Gamestate gs) {
+        public GUI(Controller controller, Gamestate gs) {
             InitializeComponent();
-            this.GS = gs;
+            this.ctrl = controller;
+            GS = gs;
+        }
+
+        public GUI() {
+            InitializeComponent();
         }
 
         private void Form1_Load(object sender, EventArgs e) {
@@ -43,10 +49,6 @@ namespace csharp_gomoku {
             pBlack = new Pen(bBlack, 1);
             //add the board's Panel Control to form
             this.Controls.Add(pnlBoard);
-        }
-
-        private void drawingInit() {
-            
         }
 
         /// <summary>
@@ -69,7 +71,7 @@ namespace csharp_gomoku {
             }
         }
 
-        private void pnlBoard_Paint(object sender, PaintEventArgs e) {
+        private void pnlBoard_Paint(object sender, PaintEventArgs e) { //reads from GS
 
             var g = e.Graphics;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -128,6 +130,25 @@ namespace csharp_gomoku {
             else lblTerminal.Show();
         }
 
+        private void btnEngineBlack_Click(object sender, EventArgs e) {
+            MessageBox.Show("This does nothing");
+        }
+
+        private void btnEngineWhite_Click(object sender, EventArgs e) {
+            MessageBox.Show("This does nothing");
+        }
+
+        private void btnPvp_Click(object sender, EventArgs e) {
+            ctrl.ResetGame();
+            pnlBoard.Refresh();
+            MessageBox.Show("Game and engine have been reset");
+        }
+
+        private void btnEngineMove_Click(object sender, EventArgs e) {
+            ctrl.MakeEngineMove();
+            pnlBoard.Refresh();
+        }
+
         private void pnlBoard_Click(object sender, EventArgs e) {
             if (!clickMove) return;
             else {
@@ -138,19 +159,19 @@ namespace csharp_gomoku {
                 var move = new Square(p.X / ls, p.Y / ls);
 
                 // try to play the move; if successful, redraw board
-                if (GS.TryMakeMove(move)) pnlBoard.Refresh();
+                if (ctrl.TryMakeMove(move)) pnlBoard.Refresh();
             }
         }
 
         private void btnUndo_Click(object sender, EventArgs e) {
-            if (GS.TryUndoMove()) {
+            if (ctrl.TryUndoMove()) {
                 pnlBoard.Refresh();
             }
         }
     }
 
     /// <summary>
-    /// This exists because the DoubleBuffered property of a normal Panel is not accessible.
+    /// We have this because the DoubleBuffered property of a normal Panel is not accessible, and redrawing without double buffer causes flickering.
     /// </summary>
     public class DoubleBufferPanel : Panel {
         public DoubleBufferPanel() {

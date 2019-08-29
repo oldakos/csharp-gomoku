@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 
 namespace csharp_gomoku {
-    
+
     /// <summary>
     /// A simple ordered pair of integers.
     /// </summary>
@@ -43,7 +43,7 @@ namespace csharp_gomoku {
 
         public const int sizeX = 15;
         public const int sizeY = 15;
-        private const int maxMoves = sizeX * sizeY;
+        public const int maxMoves = sizeX * sizeY;
 
         private byte[,] board;  // 0~empty, 1~white, 2~black
         private Stack<Square> MoveHistory; // redundancy to allow move undoing
@@ -59,11 +59,23 @@ namespace csharp_gomoku {
         public byte this[Square s] {
             get {
                 if (IsInBounds(s)) return board[s.x, s.y];
-                else return 6; //for out-of-bounds Get, return something that cannot appear on the board, works as padding
+                else return 6; //for out-of-bounds Get, return something that cannot appear on the board
             }
             private set {
                 if (IsInBounds(s)) board[s.x, s.y] = value;
             }
+        }            
+
+        /// <summary>
+        /// Returns "true" if the given Square is a valid 0-based index of the board.
+        /// </summary>
+        public bool IsInBounds(Square s) {
+            return (s.x >= 0) && (s.x < sizeX) && (s.y >= 0) && (s.y < sizeY);
+        }
+
+        public Player GetPlayerToMove() {
+            if (TurnCounter % 2 == 0) return Player.Black;
+            else return Player.White;
         }
 
         public bool TryMakeMove(Square s) {
@@ -78,7 +90,7 @@ namespace csharp_gomoku {
             else return false;
         }
 
-        public bool TryUndoMove() {            
+        public bool TryUndoMove() {
             if (MoveHistory.Count != 0) {
                 this[LastMove] = 0;
                 TurnCounter--;
@@ -89,16 +101,10 @@ namespace csharp_gomoku {
             else return false;
         }
 
-        /// <summary>
-        /// Returns "true" if the given Square is a valid 0-based index of the board.
-        /// </summary>
-        public bool IsInBounds(Square s) {
-            return (s.x >= 0) && (s.x < sizeX) && (s.y >= 0) && (s.y < sizeY);
-        }
-
-        public Player GetPlayerToMove() {
-            if (TurnCounter % 2 == 0) return Player.Black;
-            else return Player.White;
+        public void Reset() {
+            board = new byte[sizeX, sizeY];
+            MoveHistory = new Stack<Square>();
+            TurnCounter = 0;
         }
 
         /// <summary>

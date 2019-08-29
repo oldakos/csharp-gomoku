@@ -15,7 +15,9 @@ namespace csharp_gomoku {
             Application.SetCompatibleTextRenderingDefault(false);
 
             var gs = new Gamestate();
-            Application.Run(new GUI(gs));
+            var engine = new MyGreatEngine();
+            var ctrl = new Controller(gs, engine);            
+            Application.Run(new GUI(ctrl, gs));
         }
     }
 }
