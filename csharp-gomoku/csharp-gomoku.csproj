@@ -70,9 +70,12 @@
     <Compile Include="GUI.Designer.cs">
       <DependentUpon>GUI.cs</DependentUpon>
     </Compile>
+    <Compile Include="HeuristicValues.cs" />
     <Compile Include="Model.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Transposition.cs" />
+    <Compile Include="Zobrist.cs" />
     <EmbeddedResource Include="GUI.resx">
       <DependentUpon>GUI.cs</DependentUpon>
     </EmbeddedResource>

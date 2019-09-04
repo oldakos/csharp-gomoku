@@ -5,6 +5,8 @@ VisualStudioVersion = 15.0.28307.539
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "csharp-gomoku", "csharp-gomoku.csproj", "{D8251F81-97D9-4623-A21C-27740578621C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests_csharp-gomoku", "..\Tests_csharp-gomoku\Tests_csharp-gomoku.csproj", "{DF5C4384-B440-4EF3-BDAB-163DA548DEAD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{D8251F81-97D9-4623-A21C-27740578621C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D8251F81-97D9-4623-A21C-27740578621C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D8251F81-97D9-4623-A21C-27740578621C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DF5C4384-B440-4EF3-BDAB-163DA548DEAD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DF5C4384-B440-4EF3-BDAB-163DA548DEAD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DF5C4384-B440-4EF3-BDAB-163DA548DEAD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DF5C4384-B440-4EF3-BDAB-163DA548DEAD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

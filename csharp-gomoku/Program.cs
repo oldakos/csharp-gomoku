@@ -16,8 +16,10 @@ namespace csharp_gomoku {
 
             var gs = new Gamestate();
             var engine = new MyGreatEngine();
-            var ctrl = new Controller(gs, engine);            
+            var ctrl = new Controller(gs, engine);
+
             Application.Run(new GUI(ctrl, gs));
+
         }
     }
 }

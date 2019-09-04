@@ -3,30 +3,51 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace csharp_gomoku {
 
     /// <summary>
-    /// Breaks down if asked to play from a terminal state :)
+    /// Note: Breaks down if asked to play from a terminal state :)
     /// </summary>
     public partial class MyGreatEngine : IEngine {
 
         private int moveCount; //to check for draw and determine whose move it is
+        private ulong currentHash;
         private byte[,] board;
         private byte[,] considered; //the considered moves will always be within 3 "chess king moves" from any placed stone
-        //considered moves are stored as Byte rather than Bool to be able to decrement, they fit a Byte because they're at most 7*7
-        private bool makeFirstMove;
+        //considered squares take up a Byte rather than Bool to be able to decrement; they fit a Byte because they're at most 7*7
 
-        public MyGreatEngine() {
-            Init();
+        private ACAutomaton aca;
+        private Zobrist zob; //        
+        private TransposTable tt; //transposition table
+
+        //indexer to allow for padding to be somewhat transparent
+        public byte this[int x, int y] {
+            get { return board[x + 4, y + 4]; }
+            private set { board[x + 4, y + 4] = value; }
+        }
+
+        public MyGreatEngine(Zobrist z, TransposTable t) {
+            aca = new ACAutomaton();    //each thread will have its own evaluation automaton (the "same" but we need the parallel work)
+            zob = z;                    //the square*color table is read-only and we need the same codes for all threads so this one is mutual
+            tt = t;                     //transposition table obviously mutual
+            Reset();
         }
 
         /// <summary>
         /// Iterates over valid and "considered" moves on the current board.
         /// </summary>
         private IEnumerable<Square> GenerateMoves() {
+            //first suggest the best move from earlier iterations
+            int x = bestMove.x;
+            int y = bestMove.y;
+            if (board[x + 4, y + 4] == 0) yield return new Square(x, y);
+
+            //then loop over the rest of moves
             for (int i = 3; i < Gamestate.sizeX + 3; i++) {
                 for (int j = 3; j < Gamestate.sizeY + 3; j++) {
+                    if ((i == 3 + x) && (j == 3 + y)) continue;
                     if ((considered[i, j] > 0) && (board[i + 1, j + 1] == 0)) yield return new Square(i - 3, j - 3);
                 }
             }
@@ -34,10 +55,12 @@ namespace csharp_gomoku {
 
         #region Interface implementation
 
-        public void Init() {
+        public void Reset() {
             board = new byte[Gamestate.sizeX + 8, Gamestate.sizeY + 8]; //the 8 extra spaces are padding for victory checking (+-4)
             considered = new byte[Gamestate.sizeX + 6, Gamestate.sizeY + 6]; // the 6 extra are padding for consideration marking (+-3)
             moveCount = 0;
+            aca.Reset(true);
+            currentHash = 0;
         }
 
         public void EnemyMove(Square sq) {
@@ -51,76 +74,88 @@ namespace csharp_gomoku {
         public void ResetPosition(Gamestate gs) {
 
             throw new NotImplementedException(); // not yet needed for anything, will just do undo/reset
-            
-            //Deepcopy the board
-            for (int i = 0; i < Gamestate.sizeX; i++) {
-                for (int j = 0; j < Gamestate.sizeY; j++) {
-                    board[i + 4, j + 4] = gs[new Square(i,j)];
-                }
-            }
-
 
         }
 
         #region Time limited
 
+        Square bestMove; //the move to calculate first in iterative deepening
+        Thread t;
+        bool stopSearch;
+
         public void StartSearch() {
-            throw new NotImplementedException();
+            stopSearch = false;
+            t = new Thread(
+                () => IterativeSearch()
+                );
+            t.Start();
         }
 
         public Square EndSearch() {
-            throw new NotImplementedException();
+            stopSearch = true;
+            t.Join();
+            return bestMove;
+        }
+
+        public void IterativeSearch() {
+            int depth = 1;
+            while (!stopSearch) {
+                bestMove = DepthLimitedSearch(depth);
+                depth++;
+            }
+            //increment, then return
+            incrementBoard(bestMove, moveCount % 2 == 0);
+            return;
         }
 
         #endregion
 
         /// <summary>
-        /// Returns "best move" and updates inner board with it.
+        /// Returns "best move"
         /// </summary>
         /// <param name="depth">Depth must be greater than 0.</param>
         public Square DepthLimitedSearch(int depth) {
 
-            if (depth < 1) throw new Exception("The engine cannot suggest a move with search depth 0 or less");           
+            if (depth < 1) throw new Exception("The engine cannot suggest a move with search depth 0 or less");
 
             int color;
-            Square bestMove = new Square(-1, -1); //some move WILL be generated unless the engine is called to play in an already drawn boardstate.
-            int value = int.MinValue;
+            int value = -123456789;
 
             if (moveCount % 2 == 0) color = 1;
             else color = -1;
+            int alpha = -123456789;
 
             int candidateValue;
             foreach (Square child in GenerateMoves()) {
-                candidateValue = -negamax(child, depth - 1, -color);
+                incrementBoard(child, color == 1);
+                candidateValue = -negamax(child, depth - 1, -color, -123456789, -alpha);
+                decrementBoard(child);
+                if (stopSearch) break;
                 if (candidateValue > value) {
                     value = candidateValue;
+                    if (value > alpha) alpha = value;
                     bestMove = child;
                 }
+
             }
 
-            //first move of the game goes in the middle, there are no candidates in such case anyway.
+            //first move of the game goes in the middle, there are no 'considered moves' in such case anyway.
             if (moveCount == 0) {
                 bestMove = new Square(Gamestate.sizeX / 2, Gamestate.sizeY / 2);
             }
 
-            //increment! then return
-            incrementBoard(bestMove, color == 1);
             return bestMove;
         }
 
         #endregion
 
         /// <summary>
-        /// Write a move into the internal board, return true if it won the game. Expand the area of considered moves.
+        /// Write a move into the internal board. Expand the area of considered moves.
         /// The coordinate paramteres must be ACTUAL legal board coords (padding handled inside).
         /// </summary>
         /// <param name="black">True if the stone to be placed is black.</param>
-        /// <returns>Returns true if the move is winning.</returns>
-        private bool incrementBoard(Square move, bool black) {
-            //NOTE: expanding the Considered moves is necessary after "winning move" because we still undo them
-
-            byte color; //to check board against
-            bool win = false; //return value
+        private void incrementBoard(Square move, bool black) {
+            byte color; //derive board value from the boolean parameter 'black'
             int boardX = move.x + 4; //to accomodate board padding
             int boardY = move.y + 4;
             int consX = move.x + 3; //to accomodate consideration padding
@@ -131,35 +166,6 @@ namespace csharp_gomoku {
             else color = 1;
             board[boardX, boardY] = color;
 
-            //check win - copypasta & padding usage to optimize compared to how Gamestate checks for win           
-            //horizontal
-            int counter = 0;
-            for (int i = -4; i <= 4; i++) {
-                if (board[boardX + i, boardY] == color) counter++;
-                else counter = 0;
-                if (counter == 5) win = true;
-            }
-            //vertical
-            counter = 0;
-            for (int i = -4; i <= 4; i++) {
-                if (board[boardX, boardY + i] == color) counter++;
-                else counter = 0;
-                if (counter == 5) win = true;
-            }
-            //asc diagonal
-            counter = 0;
-            for (int i = -4; i <= 4; i++) {
-                if (board[boardX + i, boardY + i] == color) counter++;
-                else counter = 0;
-                if (counter == 5) win = true;
-            }
-            //desc diagonal
-            counter = 0;
-            for (int i = -4; i <= 4; i++) {
-                if (board[boardX + i, boardY - i] == color) counter++;
-                else counter = 0;
-                if (counter == 5) win = true;
-            }
 
             //update considered moves - enable/increment the 7x7 area around the new move
             for (int i = -3; i <= 3; i++) {
@@ -171,7 +177,49 @@ namespace csharp_gomoku {
             //inc moveCount
             moveCount++;
 
-            return win;
+            //update hash
+            currentHash = currentHash ^ zob.Table[move.x, move.y, color - 1];
+        }
+
+        private bool checkWin(Square move, bool black) {
+            byte color;
+            if (black) color = 2;
+            else color = 1;
+
+            int boardX = move.x + 4; //to accomodate board padding
+            int boardY = move.y + 4;
+
+            //copypasta & padding usage to optimize compared to how Gamestate checks for win           
+            //horizontal
+            int counter = 0;
+            for (int i = -4; i <= 4; i++) {
+                if (board[boardX + i, boardY] == color) counter++;
+                else counter = 0;
+                if (counter == 5) return true;
+            }
+            //vertical
+            counter = 0;
+            for (int i = -4; i <= 4; i++) {
+                if (board[boardX, boardY + i] == color) counter++;
+                else counter = 0;
+                if (counter == 5) return true;
+            }
+            //asc diagonal
+            counter = 0;
+            for (int i = -4; i <= 4; i++) {
+                if (board[boardX + i, boardY + i] == color) counter++;
+                else counter = 0;
+                if (counter == 5) return true;
+            }
+            //desc diagonal
+            counter = 0;
+            for (int i = -4; i <= 4; i++) {
+                if (board[boardX + i, boardY - i] == color) counter++;
+                else counter = 0;
+                if (counter == 5) return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -180,6 +228,9 @@ namespace csharp_gomoku {
         private void decrementBoard(Square move) {
             int consX = move.x + 3;
             int consY = move.y + 3;
+
+            //update hash
+            currentHash = currentHash ^ zob.Table[move.x, move.y, this[move.x, move.y] - 1];
 
             //remove the stone
             board[move.x + 4, move.y + 4] = 0; //+4 padding
@@ -193,42 +244,76 @@ namespace csharp_gomoku {
 
             //dec moveCount
             moveCount--;
+
+
         }
 
         /// <summary>
-        /// Increments the board with the "entry" move, finds value of the resulting position, decrements board back and returns the value.
+        /// Recursively calculates the value of the current position, up to the given depth.
         /// </summary>
-        /// <param name="x">X coord of the entry move</param>
-        /// <param name="y">Y coord of the entry move</param>
+        /// <param name="move">The last move. Win is checked in its neighborhood.z</param>
         /// <param name="depth">The remaining depth.</param>
-        /// <param name="color">The color of the player to move "after increment".</param>
-        /// <returns>The value</returns>
-        private int negamax(Square move, int depth, int color) {
-            //note that incrementBoard() is called in the first IF condition
+        /// <param name="color">The color of the player to move. 1 ~ black, -1 ~ white.</param>
+        /// <param name="alpha">The lower boundary on "interesting" scores.</param>
+        /// <param name="beta">The upper boundary on "interesting" scores.</param>
+        private int negamax(Square move, int depth, int color, int alpha, int beta) {        
+
+            //TT lookup
+            TTEntry ttEntry;
+            if (tt.TryGetValue(currentHash, out ttEntry) && (ttEntry.Depth >= depth)) {
+                switch (ttEntry.Flag) {
+                    case TTFlag.Exact:
+                        return ttEntry.Score;
+                    case TTFlag.Upper:
+                        if (ttEntry.Score < beta) beta = ttEntry.Score;
+                        break;
+                    case TTFlag.Lower:
+                        if (ttEntry.Score > alpha) alpha = ttEntry.Score;
+                        break;
+                    default:
+                        break;
+                }
+                if (alpha >= beta) {
+                    return ttEntry.Score;
+                }
+            }
+            int origAlpha = alpha; //used 
 
             //if state is terminal, return:
-            if (incrementBoard(move, color == -1)) {//increment is done with previous player's stone, arg 'color' is the player to move after increment, hence the Minus
-                decrementBoard(move);
-                return color * int.MinValue; //previous player won, so the value for player "to move" is minus inf
+            if (checkWin(move, color == -1)) {
+                return -12345678; //someone won, so the score [calculated always for black] is +inf * (previous color). We return (color to move)*(score for black) --> always -inf
             }
             if (moveCount >= Gamestate.maxMoves) {
-                decrementBoard(move);
                 return 0; //draw, return 0
             }
             if (depth <= 0) {
-                decrementBoard(move);
-                return color * evaluate(); //not a win, not a draw, but reached maximum depth (0 remaining depth), return evaluation
+                int result = color * evaluate(); //not a win, not a draw, but reached maximum depth (0 remaining depth), return evaluation
+                return result;
             }
 
             //otherwise keep searching children
-            int value = int.MinValue;
+            int value = -12345678;
             int candidateValue;
             foreach (Square child in GenerateMoves()) {
-                candidateValue = -negamax(child, depth - 1, -color);
+                if (stopSearch) return value;
+
+                incrementBoard(child, color == 1);
+                candidateValue = -negamax(child, depth - 1, -color, -beta, -alpha);
+                decrementBoard(child);
+
                 if (candidateValue > value) value = candidateValue;
+                if (value > alpha) alpha = value;
+                if (alpha >= beta) break;
             }
 
-            decrementBoard(move);
+            //finally update the TT
+            TTFlag flag;
+            if (value <= origAlpha) flag = TTFlag.Upper;
+            else if (value >= beta) flag = TTFlag.Lower;
+            else flag = TTFlag.Exact;
+            ttEntry = new TTEntry(currentHash, depth, value, flag);
+            tt.Write(ttEntry);
+
             return value;
         }
     }
