@@ -4,3 +4,6 @@
 
 /csharp-gomoku/.vs/csharp-gomoku/v15/Server/sqlite3
 /csharp-gomoku/bin/Debug
+/Tests_csharp-gomoku/obj/Debug
+/Tests_csharp-gomoku/bin/Debug
+/csharp-gomoku/obj/Debug

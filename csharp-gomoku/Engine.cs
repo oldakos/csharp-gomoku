@@ -28,17 +28,17 @@ namespace csharp_gomoku {
             private set { board[x + 4, y + 4] = value; }
         }
 
-        public MyGreatEngine(Zobrist z, TransposTable t) {
-            aca = new ACAutomaton();    //each thread will have its own evaluation automaton (the "same" but we need the parallel work)
-            zob = z;                    //the square*color table is read-only and we need the same codes for all threads so this one is mutual
-            tt = t;                     //transposition table obviously mutual
+        public MyGreatEngine() {
+            aca = new ACAutomaton();
+            zob = new Zobrist();
+            tt = new TransposTable(24);
             Reset();
         }
 
         /// <summary>
-        /// Iterates over valid and "considered" moves on the current board.
+        /// Iterates over valid and "considered" moves on the current board. The parameter is returned first.
         /// </summary>
-        private IEnumerable<Square> GenerateMoves() {
+        private IEnumerable<Square> GenerateMoves(Square bestMove) {
             //first suggest the best move from earlier iterations
             int x = bestMove.x;
             int y = bestMove.y;
@@ -64,7 +64,18 @@ namespace csharp_gomoku {
         }
 
         public void EnemyMove(Square sq) {
-            incrementBoard(sq, moveCount % 2 == 0);
+            
+            if ((null != t) && (t.IsAlive)) {   //wrap up the pondering if it is running
+                stopSearch = true;
+                t.Join();
+            }
+            incrementBoard(sq, moveCount % 2 == 0); //mark the move from outside
+
+            stopSearch = false; //start the search
+            t = new Thread(
+                () => IterativeSearch(false)
+                );
+            t.Start();
         }
 
         public void UndoMove(Square sq) {
@@ -80,31 +91,33 @@ namespace csharp_gomoku {
         #region Time limited
 
         Square bestMove; //the move to calculate first in iterative deepening
-        Thread t;
+        Thread t;       //we will use a separate thread to do time-limited thinking as well as 'pondering' during enemy move
         bool stopSearch;
 
-        public void StartSearch() {
+        public void StartMove() {            
+            //we've actually started the search when we were notified of the enemy's move
+        }
+
+        public Square EndMove() {
+            stopSearch = true;
+            t.Join();   //wrap up the current search
+            Square output = bestMove;
             stopSearch = false;
             t = new Thread(
-                () => IterativeSearch()
+                () => IterativeSearch(true)
                 );
-            t.Start();
+            t.Start(); //start an indefinite search from the resulting position (for the enemy) to populate TT
+            return output;
         }
 
-        public Square EndSearch() {
-            stopSearch = true;
-            t.Join();
-            return bestMove;
-        }
-
-        public void IterativeSearch() {
+        public void IterativeSearch(bool justPonder) {
             int depth = 1;
             while (!stopSearch) {
                 bestMove = DepthLimitedSearch(depth);
                 depth++;
             }
-            //increment, then return
-            incrementBoard(bestMove, moveCount % 2 == 0);
+            //if we're being asked to play, we will increment, but if only pondering, the increment comes from outside
+            if (!justPonder) incrementBoard(bestMove, moveCount % 2 == 0);
             return;
         }
 
@@ -126,7 +139,7 @@ namespace csharp_gomoku {
             int alpha = -123456789;
 
             int candidateValue;
-            foreach (Square child in GenerateMoves()) {
+            foreach (Square child in GenerateMoves(bestMove)) {
                 incrementBoard(child, color == 1);
                 candidateValue = -negamax(child, depth - 1, -color, -123456789, -alpha);
                 decrementBoard(child);
@@ -256,25 +269,30 @@ namespace csharp_gomoku {
         /// <param name="color">The color of the player to move. 1 ~ black, -1 ~ white.</param>
         /// <param name="alpha">The lower boundary on "interesting" scores.</param>
         /// <param name="beta">The upper boundary on "interesting" scores.</param>
-        private int negamax(Square move, int depth, int color, int alpha, int beta) {        
+        private int negamax(Square move, int depth, int color, int alpha, int beta) {
+
+            Square bestMove = move;
 
             //TT lookup
             TTEntry ttEntry;
-            if (tt.TryGetValue(currentHash, out ttEntry) && (ttEntry.Depth >= depth)) {
-                switch (ttEntry.Flag) {
-                    case TTFlag.Exact:
+            if (tt.TryGetValue(currentHash, out ttEntry)) {
+                bestMove = ttEntry.BestMove; //for ordering purposes, just take the best move regardless of depth. For the rest, depth does matter.
+                if (ttEntry.Depth >= depth) {
+                    switch (ttEntry.Flag) {
+                        case TTFlag.Exact:
+                            return ttEntry.Score;
+                        case TTFlag.Upper:
+                            if (ttEntry.Score < beta) beta = ttEntry.Score;
+                            break;
+                        case TTFlag.Lower:
+                            if (ttEntry.Score > alpha) alpha = ttEntry.Score;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (alpha >= beta) {
                         return ttEntry.Score;
-                    case TTFlag.Upper:
-                        if (ttEntry.Score < beta) beta = ttEntry.Score;
-                        break;
-                    case TTFlag.Lower:
-                        if (ttEntry.Score > alpha) alpha = ttEntry.Score;
-                        break;
-                    default:
-                        break;
-                }
-                if (alpha >= beta) {
-                    return ttEntry.Score;
+                    }
                 }
             }
             int origAlpha = alpha; //used 
@@ -294,7 +312,7 @@ namespace csharp_gomoku {
             //otherwise keep searching children
             int value = -12345678;
             int candidateValue;
-            foreach (Square child in GenerateMoves()) {
+            foreach (Square child in GenerateMoves(bestMove)) {
                 if (stopSearch) return value;
 
                 incrementBoard(child, color == 1);
@@ -311,7 +329,7 @@ namespace csharp_gomoku {
             if (value <= origAlpha) flag = TTFlag.Upper;
             else if (value >= beta) flag = TTFlag.Lower;
             else flag = TTFlag.Exact;
-            ttEntry = new TTEntry(currentHash, depth, value, flag);
+            ttEntry = new TTEntry(currentHash, bestMove, depth, value, flag);
             tt.Write(ttEntry);
 
             return value;
