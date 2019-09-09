@@ -7,9 +7,8 @@ using System.Threading.Tasks;
 namespace csharp_gomoku {
     public partial class MyGreatEngine {
         /// <summary>
-        /// Evaluates the current board. Higher value means better for black (color '1', board record '2').
+        /// Evaluates the engine's current board. Higher value means better for BLACK (color '1', board record '2'), not the current player.
         /// Uses Aho-Corasick word-search algo to find linear patterns.
-        /// AC algo source: Pruvodce labyrintem algoritmu; Mares M., Valla T.; Praha 2017
         /// </summary>
         private int evaluate() {
             if (moveCount >= Gamestate.maxMoves) return 0;
@@ -90,6 +89,8 @@ namespace csharp_gomoku {
         private int TotalValue;
         bool blackToMove;
         int black4, black3, white4, white3; //to keep track of how many threatening patterns there are on the board
+        bool lb4, lb3, lw4, lw3; //booleans indicating whether current line contains a threat
+        //there was a bug where the pattern "oooo_o" would get evaluated as win because it triggered two separate 4 patterns
 
         public ACAutomaton() {
             BuildAutomaton();
@@ -98,7 +99,7 @@ namespace csharp_gomoku {
         #region build
 
         /// <summary>
-        /// Generate tree nodes for the given word and assign the value.
+        /// Generate tree nodes for the given word and assign the value to the last node.
         /// </summary>
         private void AddWord(IEnumerable<Byte> word, int value) {
             ACNode node = Root;
@@ -157,14 +158,30 @@ namespace csharp_gomoku {
             black3 = 0;
             white4 = 0;
             white3 = 0;
+            lb4 = false;
+            lb3 = false;
+            lw4 = false;
+            lw3 = false;
         }
 
         /// <summary>
         /// Adds Linevalue to Totalvalue before setting it to 0, preparing to evaluate the next line.
         /// </summary>
         public void NewLine() {
+            //careful about reporting multiple threats on the same line
+            //TODO: known missed win is "o_ooo_o" (and maybe some similar) but these *should* be rare
+            // the false wins involving 6 in a row or something are more frequent
+            if (lb4) black4++;            
+            else if (lb3) black3++;
+            if (lw4) white4++;
+            else if (lw3) white3++;
+
             TotalValue += LineValue;
             LineValue = 0;
+            lb4 = false;
+            lb3 = false;
+            lw4 = false;
+            lw3 = false;
             CurrentNode = Root;
         }
 
@@ -190,10 +207,10 @@ namespace csharp_gomoku {
         /// </summary>
         /// <param name="value">A pattern's score.</param>
         void checkScore(int value) {
-            if (value == valueOf4) black4++;
-            if (value == -valueOf4) white4++;
-            if (value == valueOfOpen3) black3++;
-            if (value == -valueOfOpen3) white3++;
+            if (value == valueOf4) lb4 = true;
+            if (value == -valueOf4) lw4 = true;
+            if (value == valueOfOpen3) lb3 = true;
+            if (value == -valueOfOpen3) lw3 = true;
         }
 
         /// <summary>
@@ -201,19 +218,21 @@ namespace csharp_gomoku {
         /// Otherwise just add the last line's value to the total and return it.
         /// </summary>
         public int GetTotalValue() {
+            //TODO: possibly eliminate the missed win / false win cases (difficult)
             if (blackToMove) {
                 if (black4 > 0) return 12345678;    //win in one move
-                if ((black3 > 0) && (white4 == 0)) return 12345678; //no need to block white's 4, can extend an open 3 to "double" 4 -> win
-                if (white4 > 1) return -12345678; //white has more than one 4 that we need to block -> loss
-                //other pattern combinations have corner cases in which they aren't necessarily great.
-                if (white3 > 2) TotalValue += -70;  //2 open 3s could actually only be one as a "double positive" ('.xxx..' and '..xxx.')
-                                                    //but more than 2 of them can sometimes be trouble (not always, because they can be blocked in one move and/or with a 4)
+                if ((black3 > 0) && (white4 == 0)) return 12345678; //no need to block white's 4, can extend an open 3 to "double" 4 -> guaranteed win
+                if (white4 > 1) return -123456; //white has more than one 4 that we need to block -> loss | not guaranteed, might block with 1 move!
+                                                //other pattern combinations have corner cases in which they aren't necessarily winning
+                if ((white3 > 0) && (white4 > 0)) return -123456; //again, might block this with 1 move
+                if (white3 > 1) return -1234; //might block with one move or with a 4
             }
             else {
                 if (white4 > 0) return -12345678;
                 if ((white3 > 0) && (black4 == 0)) return -12345678;
-                if (black4 > 1) return 12345678;
-                if (black3 > 2) TotalValue += 70;
+                if (black4 > 1) return 123456;
+                if ((black3 > 0) && (black4 > 0)) return 123456;
+                if (black3 > 1) return 1234;
             }
 
             TotalValue += LineValue;
@@ -229,7 +248,7 @@ namespace csharp_gomoku {
     /// </summary>
     public class ACNode {
 
-        public ACNode Back; //the edge to take if there 'forward' edge is null
+        public ACNode Back; //the edge to take if the 'forward' edge is null
         public ACNode Shortcut; //closest valued state reachable by 'back' edges
         public int Value; //the evaluation score of the word ending in this node
         public ACNode[] Forward; //the edge to take after reading a given value in the board

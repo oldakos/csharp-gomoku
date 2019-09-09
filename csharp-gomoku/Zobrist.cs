@@ -16,7 +16,7 @@ namespace csharp_gomoku {
         }
 
         /// <summary>
-        /// Initialize the table with random hashes for each (Square, Color) pair
+        /// Initialize the table with random hashes for each (Square, Color) pair.
         /// </summary>
         public Zobrist() {
             Table = new ulong[Gamestate.sizeX, Gamestate.sizeY, 2];

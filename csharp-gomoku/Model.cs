@@ -24,6 +24,11 @@ namespace csharp_gomoku {
         public static Square operator *(int i, Square s) {
             return new Square(i * s.x, i * s.y);
         }
+
+        //Squares are 0-indexed in the program, but 1-indexed in the user interface.
+        public override string ToString() {
+            return (x+1).ToString() + ", " + (y+1).ToString();
+        }
     }
 
     public enum Result { Ongoing, BlackWin, WhiteWin, Draw }
@@ -31,12 +36,12 @@ namespace csharp_gomoku {
     public enum Player { Black, White }
 
     /// <summary>
-    /// Stores information about current game, including an "undo stack"
+    /// Complete game information (including move history Stack)
     /// </summary>
     public class Gamestate {
 
         public Gamestate() {
-            // initial state -> all squares are 0, turnCounter 0.
+            // initial state -> all squares are 0, turnCounter 0, empty Stack.
             board = new byte[sizeX, sizeY];
             MoveHistory = new Stack<Square>();
         }
@@ -46,7 +51,7 @@ namespace csharp_gomoku {
         public const int maxMoves = sizeX * sizeY;
 
         private byte[,] board;  // 0~empty, 1~white, 2~black
-        private Stack<Square> MoveHistory; // redundancy to allow move undoing
+        private Stack<Square> MoveHistory; // redundant, but allows move undoing
 
         public Square LastMove {
             get; private set;
@@ -78,8 +83,12 @@ namespace csharp_gomoku {
             else return Player.White;
         }
 
+        /// <summary>
+        /// If gamestate is not terminal AND target square is in-bounds and empty, make a move there.
+        /// </summary>
+        /// <returns>True if input was valid and gamestate is now updated.</returns>
         public bool TryMakeMove(Square s) {
-            //if gamestate is not terminal AND target square is in-bounds and empty, make a move there.
+            
             if ((this.GetResult() == Result.Ongoing) && (this[s] == 0)) {
                 this[s] = (byte)(2 - TurnCounter % 2);
                 TurnCounter++;
@@ -90,6 +99,10 @@ namespace csharp_gomoku {
             else return false;
         }
 
+        /// <summary>
+        /// Undo the last move.
+        /// </summary>
+        /// <returns>True if successful.</returns>
         public bool TryUndoMove() {
             if (MoveHistory.Count != 0) {
                 this[LastMove] = 0;

@@ -24,16 +24,13 @@ namespace csharp_gomoku {
         }
     }
 
-    /// <summary>
-    /// A transposition table that allows access from multiple threads.
-    /// </summary>
-    class TransposTable {
+    public class TransposTable {
 
         private TTEntry[] table;
-        private int size; //the size of the index *in bits*
+        private int size; //the size of the table's index *in bits*
 
         /// <summary>
-        /// Initializes the table itself, with an array of given size.
+        /// Initializes the table with an array of size 2^indexSize.
         /// </summary>
         /// <param name="indexSize">The number of bits to index by.</param>
         public TransposTable(int indexSize) {
@@ -45,7 +42,7 @@ namespace csharp_gomoku {
         /// Look up a position's hash in the table.
         /// </summary>
         /// <param name="hash">The hash to search for.</param>
-        /// <param name="entry">The entry from the table.</param>
+        /// <param name="entry">The found entry.</param>
         /// <returns>True if the lookup was successful and the out-param contains the correct record.</returns>
         public bool TryGetValue(ulong hash, out TTEntry entry) {
 
@@ -59,7 +56,6 @@ namespace csharp_gomoku {
         /// <summary>
         /// Submit an entry to the tablebase. It will decide for itself whether it keeps it or prefers the previous record.
         /// </summary>
-        /// <param name="entry">The new entry.</param>
         public void Write(TTEntry entry) {
 
             //CURRENT STRATEGY: "Replace with higher depth"

@@ -14,32 +14,33 @@ namespace csharp_gomoku {
         DoubleBufferPanel pnlBoard = new DoubleBufferPanel();
         Brush bBlack, bWhite, bRed;
         Pen pBlack;
-
-        Gamestate GS; //draw gamestate from here
-        Controller ctrl; //send inputs here
+        Font coordFont; //font to label axes
 
         const int ss = 20; //STONE SIZE constant for drawing purposes
         const int ls = 24; //LINE SPACING constant for drawing purposes
         const bool clickMove = true; //enable moves by clicking the board (otherwise text input?)
 
-        public GUI(Controller controller, Gamestate gs) {
+        public GUI(Gamestate gs) {
             InitializeComponent();
-            this.ctrl = controller;
             GS = gs;
+            Engine = new MyGreatEngine(this);
         }
 
         public GUI() {
-            InitializeComponent();
+
         }
 
         private void Form1_Load(object sender, EventArgs e) {
             //hide the "terminal gamestate" label
             lblTerminal.Text = "TERMINAL GAMESTATE";
             lblTerminal.Hide();
+
+            lblEval.Text = "Current pos heuristic value:\n0";
+            lblEngineMove.Text = "N/A";
             //set up the panel for the board
             pnlBoard.Location = new Point(32, 32);
-            pnlBoard.Width = Gamestate.sizeX * ls;
-            pnlBoard.Height = Gamestate.sizeY * ls;
+            pnlBoard.Width = (Gamestate.sizeX + 1) * ls;
+            pnlBoard.Height = (Gamestate.sizeY + 1) * ls;
             pnlBoard.Paint += pnlBoard_Paint;
             pnlBoard.Click += pnlBoard_Click;
             //prepare brushes and pens
@@ -47,8 +48,11 @@ namespace csharp_gomoku {
             bWhite = new SolidBrush(Color.White);
             bRed = new SolidBrush(Color.Red);
             pBlack = new Pen(bBlack, 1);
+            coordFont = new Font("Arial", 10);
             //add the board's Panel Control to form
             this.Controls.Add(pnlBoard);
+            //prevent any 'unitialized' nonsense with TopEngineMove
+            TopEngineMove = new Square(-1, -1);
         }
 
         /// <summary>
@@ -76,7 +80,7 @@ namespace csharp_gomoku {
             var g = e.Graphics;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
-            //clear previous grid (for Undoing)
+            //clear previous grid (without this Undo wouldn't be shown properly)
 
             g.Clear(pnlBoard.BackColor);
 
@@ -85,6 +89,7 @@ namespace csharp_gomoku {
             int startX = ls / 2;
             int startY = ls / 2;
             int x, y;
+
             //horizontal lines
             int lineLength = (Gamestate.sizeX - 1) * ls;
             int endX = startX + lineLength;
@@ -93,6 +98,7 @@ namespace csharp_gomoku {
                 g.DrawLine(pBlack, startX, y, endX, y);
                 y += ls;
             }
+
             //vertical lines
             lineLength = (Gamestate.sizeY - 1) * ls;
             int endY = startY + lineLength;
@@ -100,6 +106,16 @@ namespace csharp_gomoku {
             for (int i = 0; i < Gamestate.sizeX; i++) {
                 g.DrawLine(pBlack, x, startY, x, endY);
                 x += ls;
+            }
+
+            //coordinate labels
+            startX += -ls - 6;
+            startY += -ls - 6;
+            for (int i = 1; i <= Gamestate.sizeX; i++) {
+                g.DrawString(i.ToString(), coordFont, bBlack, startX + i * ls, y - 6);
+            }
+            for (int j = 1; j <= Gamestate.sizeY; j++) {
+                g.DrawString(j.ToString(), coordFont, bBlack, x - 6, startY + j * ls);
             }
 
             //then, draw the stones
@@ -130,48 +146,64 @@ namespace csharp_gomoku {
             else lblTerminal.Show();
         }
 
-        private void btnEngineBlack_Click(object sender, EventArgs e) {
-            MessageBox.Show("This does nothing");
-        }
-
-        private void btnEngineWhite_Click(object sender, EventArgs e) {
-            MessageBox.Show("This does nothing");
-        }
-
-        private void btnPvp_Click(object sender, EventArgs e) {
-            ctrl.ResetGame();
+        private void btnReset_Click(object sender, EventArgs e) {
+            ResetGame();
             pnlBoard.Refresh();
             MessageBox.Show("Game and engine have been reset");
         }
 
+        private void btnStartThink_Click(object sender, EventArgs e) {
+            Engine.StartThink();
+        }
+
+        private void btnStopThink_Click(object sender, EventArgs e) {
+            Engine.StopThink();
+        }
+
+        private void GUI_FormClosing(object sender, FormClosingEventArgs e) {
+            Engine.StopThink();
+        }
+
         private void btnEngineMove_Click(object sender, EventArgs e) {
-            ctrl.MakeEngineMove();
-            pnlBoard.Refresh();
+            if (TryMakeMove(TopEngineMove)) pnlBoard.Refresh();
+        }
+
+        private void btnHelp_Click(object sender, EventArgs e) {
+            MessageBox.Show(
+                "Hi! Play moves on the board by clicking it.\n" +
+                "The functions of the controls top to bottom are as follows:\n" +
+                "The first label shows the heuristic value of the current position, higher number means better for black. (Only active when the engine is running)\n"+
+                "The \"Make engine move\" button is the same as clicking on the \"Recommended\" coordinates yourself.\n" +
+                "The engine's recommendation's score is the higher the better the *player to move* is. (Different from current eval)\n" +
+                "Scores like +-123456 mean that the engine is certain a player must win, the recommended move then might not make sense.\n" +
+                "The \"Start think\" and \"End think\" buttons start/end the background work of the engine.\n" +
+                "Finally, the \"Undo\" and \"Reset\" buttons do exactly what their label says.\n" +
+                "A special label pops up whenever a terminal position is reached. (Someone wins or the board is full)"
+                );
         }
 
         private void pnlBoard_Click(object sender, EventArgs e) {
-            if (!clickMove) return;
-            else {
-                // get click coords within the panel
-                Point p = pnlBoard.PointToClient(Cursor.Position);
+            // get click coords within the panel
+            Point p = pnlBoard.PointToClient(Cursor.Position);
 
-                // calculate board coords
-                var move = new Square(p.X / ls, p.Y / ls);
+            // calculate board coords
+            var move = new Square(p.X / ls, p.Y / ls);
 
-                // try to play the move; if successful, redraw board
-                if (ctrl.TryMakeMove(move)) pnlBoard.Refresh();
+            // try to play that move
+            if (TryMakeMove(move)) {
+                pnlBoard.Refresh();
             }
         }
 
         private void btnUndo_Click(object sender, EventArgs e) {
-            if (ctrl.TryUndoMove()) {
+            if (TryUndoMove()) {
                 pnlBoard.Refresh();
             }
         }
     }
 
     /// <summary>
-    /// We have this because the DoubleBuffered property of a normal Panel is not accessible, and redrawing without double buffer causes flickering.
+    /// We have this because the DoubleBuffered property of a "normal" Panel is not accessible, and redrawing without double buffer causes flickering.
     /// </summary>
     public class DoubleBufferPanel : Panel {
         public DoubleBufferPanel() {

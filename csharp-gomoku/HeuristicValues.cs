@@ -6,16 +6,16 @@ using System.Threading.Tasks;
 
 namespace csharp_gomoku {
 
-    partial class ACAutomaton {
+    public partial class ACAutomaton {
 
-        private const int valueOf4 = 3;
-        private const int valueOfOpen3 = 5;
+        public const int valueOf4 = 3;
+        public const int valueOfOpen3 = 5;
 
         /// <summary>
-        /// Adds all the heuristic patterns (with values) to the AC tree.
+        /// Adds all the linear heuristic patterns (with values) to the AC tree.
         /// </summary>
         private void FillTree() {
-            //Higher value means better for black(color '1', board record '2').
+            //Higher value means better for black ('black' is board record '2').
 
             //4s for black (can win)           
             AddWord(new byte[] { 0, 2, 2, 2, 2 }, valueOf4);
@@ -82,30 +82,7 @@ namespace csharp_gomoku {
             //AddWord(new byte[] { }, 69);
             //AddWord(new byte[] { }, 69);
             //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-            //AddWord(new byte[] { }, 69);
-
+            //AddWord(new byte[] { }, 69);            
         }
     }
 }

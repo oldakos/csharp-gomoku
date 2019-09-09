@@ -8,142 +8,203 @@ using System.Threading;
 namespace csharp_gomoku {
 
     /// <summary>
-    /// Note: Breaks down if asked to play from a terminal state :)
+    /// IEngine implementation, requires a 'GUI' class instance to send its recommended move to.
     /// </summary>
     public partial class MyGreatEngine : IEngine {
 
         private int moveCount; //to check for draw and determine whose move it is
         private ulong currentHash;
         private byte[,] board;
-        private byte[,] considered; //the considered moves will always be within 3 "chess king moves" from any placed stone
-        //considered squares take up a Byte rather than Bool to be able to decrement; they fit a Byte because they're at most 7*7
+        private byte[,] considered; //the considered moves will always be within 2 "chess king moves" from any placed stone
+        //considered squares take up a Byte rather than Bool because we want to be able to decrement; they fit a Byte because they're at most 5*5
 
         private ACAutomaton aca;
-        private Zobrist zob; //        
-        private TransposTable tt; //transposition table
+        private Zobrist zob;        
+        private TransposTable tt; 
 
-        //indexer to allow for padding to be somewhat transparent
+        private GUI gui;
+
+        private Random rng; //for move generation shuffling
+
+        //indexer to allow for padding to be transparent if desired
         public byte this[int x, int y] {
             get { return board[x + 4, y + 4]; }
             private set { board[x + 4, y + 4] = value; }
         }
 
-        public MyGreatEngine() {
+        public MyGreatEngine(GUI g) {
             aca = new ACAutomaton();
             zob = new Zobrist();
             tt = new TransposTable(24);
+            gui = g;
             Reset();
+            rng = new Random();
         }
 
         /// <summary>
-        /// Iterates over valid and "considered" moves on the current board. The parameter is returned first.
+        /// Iterates over moves which are valid and "considered" on the current board.
         /// </summary>
-        private IEnumerable<Square> GenerateMoves(Square bestMove) {
-            //first suggest the best move from earlier iterations
-            int x = bestMove.x;
-            int y = bestMove.y;
-            if (board[x + 4, y + 4] == 0) yield return new Square(x, y);
-
-            //then loop over the rest of moves
-            for (int i = 3; i < Gamestate.sizeX + 3; i++) {
-                for (int j = 3; j < Gamestate.sizeY + 3; j++) {
-                    if ((i == 3 + x) && (j == 3 + y)) continue;
-                    if ((considered[i, j] > 0) && (board[i + 1, j + 1] == 0)) yield return new Square(i - 3, j - 3);
+        private IEnumerable<Square> GenerateMoves() {
+            for (int i = 2; i < Gamestate.sizeX + 2; i++) {
+                for (int j = 2; j < Gamestate.sizeY + 2; j++) {
+                    if ((considered[i, j] > 0) && (this[i - 2, j - 2] == 0)) yield return new Square(i - 2, j - 2);
                 }
             }
         }
 
+        /// <summary>
+        /// Apply the 'Fisher-Yates shuffle' algo on the 'GenerateMoves' enumeration.
+        /// </summary>
+        /// <param name="bestMove">Returns this parameter first, regardless of the generated moves.</param>
+        private IEnumerable<Square> GenerateShuffledMoves(Square bestMove) {
+            //first return the param if it's legal
+            int x = bestMove.x;
+            int y = bestMove.y;
+            if (this[x, y] == 0) yield return new Square(x, y);
+
+            var tempList = GenerateMoves().ToList();
+            int j;
+            for (int i = 0; i < tempList.Count; i++) {
+                j = rng.Next(i, tempList.Count);
+                yield return tempList[j];
+                tempList[j] = tempList[i];
+            }
+        }
+
+        /// <summary>
+        /// Send the latest "best move" to the GUI.
+        /// </summary>
+        private void UpdateGui(int depth, int score) {
+            MoveReport mr = new MoveReport(bestMove, depth, score, currentHeuristicScore);
+            if (!stopSearch) gui.DisplayEngineMove(mr); //calling this after search is stopped leads to a deadlock situation because the GUI thread has called Join on this thread
+        }
+
         #region Interface implementation
 
+        Square bestMove;
+        Thread t;
+        bool stopSearch; //for telling the worker thread to stop and return
+        bool enableNewSearches;
+        int currentHeuristicScore;
+
         public void Reset() {
+
+            StopThink();
+
             board = new byte[Gamestate.sizeX + 8, Gamestate.sizeY + 8]; //the 8 extra spaces are padding for victory checking (+-4)
-            considered = new byte[Gamestate.sizeX + 6, Gamestate.sizeY + 6]; // the 6 extra are padding for consideration marking (+-3)
+            considered = new byte[Gamestate.sizeX + 4, Gamestate.sizeY + 4]; // the 4 extra are padding for consideration marking (+-2)
             moveCount = 0;
-            aca.Reset(true);
+            aca.Reset(true); //black goes first
             currentHash = 0;
         }
 
-        public void EnemyMove(Square sq) {
-            
-            if ((null != t) && (t.IsAlive)) {   //wrap up the pondering if it is running
-                stopSearch = true;
-                t.Join();
-            }
-            incrementBoard(sq, moveCount % 2 == 0); //mark the move from outside
+        //before every move update, the search must be paused (returned to root node) because otherwise the engine's internal board and/or search algo would crash and burn
 
-            stopSearch = false; //start the search
-            t = new Thread(
-                () => IterativeSearch(false)
-                );
-            t.Start();
+        public void DoMove(Square sq) {
+            PauseThink();
+            incrementBoard(sq, moveCount % 2 == 0); //mark the move from outside
+            ResumeThink();
         }
 
         public void UndoMove(Square sq) {
+            PauseThink();
             decrementBoard(sq);
+            ResumeThink();
+        }        
+
+        public void StartThink() {
+            enableNewSearches = true;
+            ResumeThink();
         }
 
-        public void ResetPosition(Gamestate gs) {
-
-            throw new NotImplementedException(); // not yet needed for anything, will just do undo/reset
-
-        }
-
-        #region Time limited
-
-        Square bestMove; //the move to calculate first in iterative deepening
-        Thread t;       //we will use a separate thread to do time-limited thinking as well as 'pondering' during enemy move
-        bool stopSearch;
-
-        public void StartMove() {            
-            //we've actually started the search when we were notified of the enemy's move
-        }
-
-        public Square EndMove() {
-            stopSearch = true;
-            t.Join();   //wrap up the current search
-            Square output = bestMove;
-            stopSearch = false;
-            t = new Thread(
-                () => IterativeSearch(true)
-                );
-            t.Start(); //start an indefinite search from the resulting position (for the enemy) to populate TT
-            return output;
-        }
-
-        public void IterativeSearch(bool justPonder) {
-            int depth = 1;
-            while (!stopSearch) {
-                bestMove = DepthLimitedSearch(depth);
-                depth++;
-            }
-            //if we're being asked to play, we will increment, but if only pondering, the increment comes from outside
-            if (!justPonder) incrementBoard(bestMove, moveCount % 2 == 0);
-            return;
+        /// <summary>
+        /// Stop search and prevent its resuming after move updates, until StartThink is called.
+        /// </summary>
+        public void StopThink() {
+            PauseThink();
+            enableNewSearches = false;
         }
 
         #endregion
 
         /// <summary>
-        /// Returns "best move"
+        /// As opposed to StopThink, this only pauses the search for the internal board to get "synchronized".
+        /// </summary>
+        private void PauseThink() {
+            stopSearch = true;
+            if (null != t) t.Join();
+        }
+
+        /// <summary>
+        /// Only start thinking if "pause" is on.
+        /// </summary>
+        private void ResumeThink() {
+            if (stopSearch && enableNewSearches) { //only start if previous search has stopped and new search is allowed
+                currentHeuristicScore = evaluate();
+
+                stopSearch = false;
+                t = new Thread(
+                  () => IterativeSearch()
+                  );
+                t.Start();
+            }
+        }
+
+        public void IterativeSearch() {
+            int depth = 1;
+            int score;
+            while (!stopSearch) {
+                score = DepthLimitedSearch(depth);
+                UpdateGui(depth, score);
+                depth++;
+            }
+            return;
+        }
+
+        /// <summary>
+        /// Assigns to "bestMove" the result of a search of fixed max depth and returns its score.
         /// </summary>
         /// <param name="depth">Depth must be greater than 0.</param>
-        public Square DepthLimitedSearch(int depth) {
-
-            if (depth < 1) throw new Exception("The engine cannot suggest a move with search depth 0 or less");
+        public int DepthLimitedSearch(int depth) {
+            //it is like a negamax step but we work with the 'bestMove' variable and disregard terminal state and omit TT writing
 
             int color;
-            int value = -123456789;
-
             if (moveCount % 2 == 0) color = 1;
             else color = -1;
+
+            int value = -123456789;
             int alpha = -123456789;
+            int beta = 123456789;
+
+            //TT lookup
+            TTEntry ttEntry;
+            if (tt.TryGetValue(currentHash, out ttEntry)) {
+                if (ttEntry.Depth >= depth) {
+                    bestMove = ttEntry.BestMove; //as opposed to "inside the negamax", we only rewrite bestMove with a "deeper" recorded value!
+                    switch (ttEntry.Flag) {
+                        case TTFlag.Exact:
+                            return ttEntry.Score;
+                        case TTFlag.Upper:
+                            beta = ttEntry.Score;
+                            break;
+                        case TTFlag.Lower:
+                            alpha = ttEntry.Score;
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
 
             int candidateValue;
-            foreach (Square child in GenerateMoves(bestMove)) {
+            foreach (Square child in GenerateShuffledMoves(bestMove)) {
+
                 incrementBoard(child, color == 1);
-                candidateValue = -negamax(child, depth - 1, -color, -123456789, -alpha);
+                candidateValue = -negamax(child, depth - 1, -color, -beta, -alpha);
                 decrementBoard(child);
-                if (stopSearch) break;
+
+                if (stopSearch) break; // do not overwrite bestMove with a result that came from an interrupted branch
+
                 if (candidateValue > value) {
                     value = candidateValue;
                     if (value > alpha) alpha = value;
@@ -155,12 +216,12 @@ namespace csharp_gomoku {
             //first move of the game goes in the middle, there are no 'considered moves' in such case anyway.
             if (moveCount == 0) {
                 bestMove = new Square(Gamestate.sizeX / 2, Gamestate.sizeY / 2);
+                return 0;
             }
 
-            return bestMove;
+            return value;
         }
 
-        #endregion
 
         /// <summary>
         /// Write a move into the internal board. Expand the area of considered moves.
@@ -171,8 +232,8 @@ namespace csharp_gomoku {
             byte color; //derive board value from the boolean parameter 'black'
             int boardX = move.x + 4; //to accomodate board padding
             int boardY = move.y + 4;
-            int consX = move.x + 3; //to accomodate consideration padding
-            int consY = move.y + 3;
+            int consX = move.x + 2; //to accomodate consideration padding
+            int consY = move.y + 2;
 
             //update the stone
             if (black) color = 2;
@@ -180,20 +241,22 @@ namespace csharp_gomoku {
             board[boardX, boardY] = color;
 
 
-            //update considered moves - enable/increment the 7x7 area around the new move
-            for (int i = -3; i <= 3; i++) {
-                for (int j = -3; j <= 3; j++) {
+            //update considered moves - enable/increment the 5x5 area around the new move
+            for (int i = -2; i <= 2; i++) {
+                for (int j = -2; j <= 2; j++) {
                     considered[consX + i, consY + j]++;
                 }
             }
 
-            //inc moveCount
             moveCount++;
 
-            //update hash
+            //update zobhash
             currentHash = currentHash ^ zob.Table[move.x, move.y, color - 1];
         }
 
+        /// <summary>
+        /// Check if there's a 5-in-a-row on the current board containing the given square for the given player.
+        /// </summary>
         private bool checkWin(Square move, bool black) {
             byte color;
             if (black) color = 2;
@@ -239,8 +302,8 @@ namespace csharp_gomoku {
         /// Clear a move from the internal board, remove its neighboring area from considered moves.
         /// </summary>
         private void decrementBoard(Square move) {
-            int consX = move.x + 3;
-            int consY = move.y + 3;
+            int consX = move.x + 2;
+            int consY = move.y + 2;
 
             //update hash
             currentHash = currentHash ^ zob.Table[move.x, move.y, this[move.x, move.y] - 1];
@@ -248,35 +311,33 @@ namespace csharp_gomoku {
             //remove the stone
             board[move.x + 4, move.y + 4] = 0; //+4 padding
 
-            //update considered moves - disable/decrement the 7x7 area around the removed move
-            for (int i = -3; i <= 3; i++) {
-                for (int j = -3; j <= 3; j++) {
+            //update considered moves - disable/decrement the 5x5 area around the removed move
+            for (int i = -2; i <= 2; i++) {
+                for (int j = -2; j <= 2; j++) {
                     considered[consX + i, consY + j]--;
                 }
             }
 
-            //dec moveCount
             moveCount--;
-
-
         }
 
         /// <summary>
         /// Recursively calculates the value of the current position, up to the given depth.
         /// </summary>
-        /// <param name="move">The last move. Win is checked in its neighborhood.z</param>
-        /// <param name="depth">The remaining depth.</param>
+        /// <param name="move">The last move. Win is checked in its neighborhood.</param>
+        /// <param name="depth">The remaining available depth.</param>
         /// <param name="color">The color of the player to move. 1 ~ black, -1 ~ white.</param>
         /// <param name="alpha">The lower boundary on "interesting" scores.</param>
         /// <param name="beta">The upper boundary on "interesting" scores.</param>
         private int negamax(Square move, int depth, int color, int alpha, int beta) {
 
-            Square bestMove = move;
+            Square localBestMove = move;
+            int origAlpha = alpha;
 
             //TT lookup
             TTEntry ttEntry;
             if (tt.TryGetValue(currentHash, out ttEntry)) {
-                bestMove = ttEntry.BestMove; //for ordering purposes, just take the best move regardless of depth. For the rest, depth does matter.
+                localBestMove = ttEntry.BestMove; //for ordering purposes, just take the best move regardless of depth. For the rest, depth does matter.
                 if (ttEntry.Depth >= depth) {
                     switch (ttEntry.Flag) {
                         case TTFlag.Exact:
@@ -295,7 +356,6 @@ namespace csharp_gomoku {
                     }
                 }
             }
-            int origAlpha = alpha; //used 
 
             //if state is terminal, return:
             if (checkWin(move, color == -1)) {
@@ -312,24 +372,29 @@ namespace csharp_gomoku {
             //otherwise keep searching children
             int value = -12345678;
             int candidateValue;
-            foreach (Square child in GenerateMoves(bestMove)) {
-                if (stopSearch) return value;
+            foreach (Square child in GenerateShuffledMoves(localBestMove)) {
+                if (stopSearch) return value; //do not visit any more children if search is stopped
 
                 incrementBoard(child, color == 1);
                 candidateValue = -negamax(child, depth - 1, -color, -beta, -alpha);
                 decrementBoard(child);
 
-                if (candidateValue > value) value = candidateValue;
+                if (candidateValue > value) {
+                    value = candidateValue;
+                    localBestMove = child;
+                }
                 if (value > alpha) alpha = value;
                 if (alpha >= beta) break;
             }
 
-            //finally update the TT
+            if (stopSearch) return value;//do not update TT if search is stopped
+
+            //TT update
             TTFlag flag;
             if (value <= origAlpha) flag = TTFlag.Upper;
             else if (value >= beta) flag = TTFlag.Lower;
             else flag = TTFlag.Exact;
-            ttEntry = new TTEntry(currentHash, bestMove, depth, value, flag);
+            ttEntry = new TTEntry(currentHash, localBestMove, depth, value, flag);
             tt.Write(ttEntry);
 
             return value;

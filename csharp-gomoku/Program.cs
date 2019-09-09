@@ -14,12 +14,7 @@ namespace csharp_gomoku {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            var gs = new Gamestate();
-            var engine = new MyGreatEngine();
-            var ctrl = new Controller(gs, engine);
-
-            Application.Run(new GUI(ctrl, gs));
-
+            Application.Run(new GUI(new Gamestate()));
         }
     }
 }
